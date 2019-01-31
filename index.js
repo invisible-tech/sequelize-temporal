@@ -1,86 +1,113 @@
-var _ = require('lodash');
+const {
+  flow,
+  filter,
+  map,
+  mapValues,
+  omit,
+  pluck,
+} = require('lodash/fp')
 
-var temporalDefaultOptions = {
+const temporalDefaultOptions = {
   // runs the insert within the sequelize hook chain, disable
   // for increased performance
   blocking: true,
-  full: false
-};
-
-var excludeAttributes = function(obj, attrsToExclude){
-  // fancy way to exclude attributes
-  return _.omit(obj, _.partial(_.rearg(_.contains,0,2,1), attrsToExclude));
+  full: false,
 }
 
-var Temporal = function(model, sequelize, temporalOptions){
-  temporalOptions = _.extend({},temporalDefaultOptions, temporalOptions);
+const Temporal = (model, sequelize, temporalOptions) => {
+  temporalOptions = { ...temporalDefaultOptions, ...temporalOptions }
 
-  var Sequelize = sequelize.Sequelize;
+  const Sequelize = sequelize.Sequelize
 
-  var historyName = model.name + 'History';
-  //var historyName = model.getTableName() + 'History';
-  //var historyName = model.options.name.singular + 'History';
+  const historyName = model.name + 'History'
+  //const historyName = model.getTableName() + 'History'
+  //const historyName = model.options.name.singular + 'History'
 
-  var historyOwnAttrs = {
+  const historyOwnAttrs = {
     hid: {
-      type:          Sequelize.BIGINT,
-      primaryKey:    true,
+      type: Sequelize.BIGINT,
+      primaryKey: true,
       autoIncrement: true,
-      unique: true
+      unique: true,
     },
     archivedAt: {
       type: Sequelize.DATE,
       allowNull: false,
-      defaultValue: Sequelize.NOW
-    }
-  };
-
-  var excludedAttributes = ["Model","unique","primaryKey","autoIncrement", "set", "get", "_modelAttribute"];
-  var historyAttributes = _(model.rawAttributes).mapValues(function(v){
-    v = excludeAttributes(v, excludedAttributes);
-    // remove the "NOW" defaultValue for the default timestamps
-    // we want to save them, but just a copy from our master record
-    if(v.fieldName == "createdAt" || v.fieldName == "updatedAt"){
-      v.type = Sequelize.DATE;
-    }
-    return v;
-  }).assign(historyOwnAttrs).value();
-  // If the order matters, use this:
-  //historyAttributes = _.assign({}, historyOwnAttrs, historyAttributes);
-
-  var historyOwnOptions = {
-    timestamps: false
-  };
-  var excludedNames = ["name", "tableName", "sequelize", "uniqueKeys", "hasPrimaryKey", "hooks", "scopes", "instanceMethods", "defaultScope"];
-  var modelOptions = excludeAttributes(model.options, excludedNames);
-  var historyOptions = _.assign({}, modelOptions, historyOwnOptions);
-  
-  // We want to delete indexes that have unique constraint
-  var indexes = historyOptions.indexes;
-  if(Array.isArray(indexes)){
-     historyOptions.indexes = indexes.filter(function(index){return !index.unique && index.type != 'UNIQUE';});
+      defaultValue: Sequelize.NOW,
+    },
   }
 
-  var modelHistory = sequelize.define(historyName, historyAttributes, historyOptions);
+  const excludedAttributes = [
+    'Model',
+    'unique',
+    'primaryKey',
+    'autoIncrement',
+    'set',
+    'get',
+    '_modelAttribute',
+  ]
+  const historyAttributes = {
+    ...mapValues(v => {
+      v = omit(excludedAttributes)(v)
+      // remove the "NOW" defaultValue for the default timestamps
+      // we want to save them, but just a copy from our master record
+      if (v.fieldName == 'createdAt' || v.fieldName == 'updatedAt') {
+        v.type = Sequelize.DATE
+      }
+      return v
+    })(model.rawAttributes),
+    ...historyOwnAttrs,
+  }
+
+  const historyOwnOptions = {
+    timestamps: false,
+  }
+  const excludedNames = [
+    'name',
+    'tableName',
+    'sequelize',
+    'uniqueKeys',
+    'hasPrimaryKey',
+    'hooks',
+    'scopes',
+    'instanceMethods',
+    'defaultScope',
+  ]
+  const modelOptions = omit(excludedNames)(model.options)
+  const historyOptions = { ...modelOptions, ...historyOwnOptions }
+
+  // We want to delete indexes that have unique constraint
+  const indexes = historyOptions.indexes
+
+  if (Array.isArray(indexes)) {
+    historyOptions.indexes = flow(
+      filter(idx => !idx.unique && idx.type !== 'UNIQUE'),
+      map(idx => ({ ...idx, name: join('_')([historyName, ...idx.fields]) }))
+    )(indexes)
+  }
+
+  const modelHistory = sequelize.define(historyName, historyAttributes, historyOptions)
 
   // we already get the updatedAt timestamp from our models
-  var insertHook = function(obj, options){
-    var dataValues = (!temporalOptions.full && obj._previousDataValues) || obj.dataValues;
-    var historyRecord = modelHistory.create(dataValues, {transaction: options.transaction});
-    if(temporalOptions.blocking){
-      return historyRecord;
+  const insertHook = (obj, options) => {
+    const dataValues = (!temporalOptions.full && obj._previousDataValues) || obj.dataValues
+    const historyRecord = modelHistory.create(dataValues, { transaction: options.transaction })
+    if (temporalOptions.blocking) {
+      return historyRecord
     }
   }
-  var insertBulkHook = function(options){
-    if(!options.individualHooks){
-      var queryAll = model.findAll({where: options.where, transaction: options.transaction}).then(function(hits){
-        if(hits){
-          hits = _.pluck(hits, 'dataValues');
-          return modelHistory.bulkCreate(hits, {transaction: options.transaction});
-        }
-      });
-      if(temporalOptions.blocking){
-        return queryAll;
+
+  const insertBulkHook = (options) => {
+    if (!options.individualHooks) {
+      const queryAll = model
+        .findAll({ where: options.where, transaction: options.transaction })
+        .then((hits) => {
+          if (hits) {
+            return modelHistory.bulkCreate(pluck('dataValues')(hits), { transaction: options.transaction })
+          }
+        })
+      if (temporalOptions.blocking) {
+        return queryAll
       }
     }
   }
@@ -88,26 +115,26 @@ var Temporal = function(model, sequelize, temporalOptions){
   // use `after` to be nonBlocking
   // all hooks just create a copy
   if (temporalOptions.full) {
-    model.addHook('afterCreate', insertHook);
-    model.addHook('afterUpdate', insertHook);
-    model.addHook('afterDestroy', insertHook);
-    model.addHook('afterRestore', insertHook);
+    model.addHook('afterCreate', insertHook)
+    model.addHook('afterUpdate', insertHook)
+    model.addHook('afterDestroy', insertHook)
+    model.addHook('afterRestore', insertHook)
   } else {
-    model.addHook('beforeUpdate', insertHook);
-    model.addHook('beforeDestroy', insertHook);
+    model.addHook('beforeUpdate', insertHook)
+    model.addHook('beforeDestroy', insertHook)
   }
 
-  model.addHook('beforeBulkUpdate', insertBulkHook);
-  model.addHook('beforeBulkDestroy', insertBulkHook);
+  model.addHook('beforeBulkUpdate', insertBulkHook)
+  model.addHook('beforeBulkDestroy', insertBulkHook)
 
-  var readOnlyHook = function(){
-    throw new Error("This is a read-only history database. You aren't allowed to modify it.");    
-  };
+  const readOnlyHook = () => {
+    throw new Error("This is a read-only history database. You aren't allowed to modify it.")
+  }
 
-  modelHistory.addHook('beforeUpdate', readOnlyHook);
-  modelHistory.addHook('beforeDestroy', readOnlyHook);
+  modelHistory.addHook('beforeUpdate', readOnlyHook)
+  modelHistory.addHook('beforeDestroy', readOnlyHook)
 
-  return model;
-};
+  return model
+}
 
-module.exports = Temporal;
+module.exports = Temporal
