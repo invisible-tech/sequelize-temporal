@@ -4,6 +4,7 @@ Temporal tables for Sequelize
 
 [![Build Status](https://travis-ci.org/bonaval/sequelize-temporal.svg?branch=master)](https://travis-ci.org/bonaval/sequelize-temporal) [![Dependency Status](https://david-dm.org/bonaval/sequelize-temporal.svg)](https://david-dm.org/bonaval/sequelize-temporal) [![NPM version](https://img.shields.io/npm/v/sequelize-temporal.svg)](https://www.npmjs.com/package/sequelize-temporal)
 
+Forked from: https://github.com/bonaval/sequelize-temporal
 
 What is it?
 -----------
