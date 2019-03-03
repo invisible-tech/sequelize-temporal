@@ -45,7 +45,7 @@ const Temporal = (model, sequelize, temporalOptions) => {
     'autoIncrement',
     'set',
     'get',
-    '_modelAttribute',
+    '_modelAttribute'
   ]
   const historyAttributes = {
     ...mapValues(v => {
@@ -55,6 +55,7 @@ const Temporal = (model, sequelize, temporalOptions) => {
       if (v.fieldName == 'createdAt' || v.fieldName == 'updatedAt') {
         v.type = Sequelize.DATE
       }
+      v.allowNull = true
       return v
     })(model.rawAttributes),
     ...historyOwnAttrs,
